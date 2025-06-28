@@ -72,7 +72,7 @@ export default function AttendanceForm() {
     }
   }
 
-  const checkExistingAttendance = async () => {
+  const checkExistingAttendance = async (showMessage = true) => {
     if (!selectedProgram) return
 
     try {
@@ -95,17 +95,21 @@ export default function AttendanceForm() {
           }
         })
         setAttendanceData(existingData)
-        setMessage('Bu program için bugün yoklama alınmış. Mevcut verileri güncelleyebilirsiniz.')
+        if (showMessage) {
+          setMessage('Bu program için bugün yoklama alınmış. Mevcut verileri güncelleyebilirsiniz.')
+        }
       } else {
         setExistingAttendance([])
         // Yeni yoklama için varsayılan değerleri ayarla
         setAttendanceData(
           students.map(student => ({
             studentId: student.id,
-            status: 'Geldi' as const
+            status: '' as const
           }))
         )
-        setMessage('')
+        if (showMessage) {
+          setMessage('')
+        }
       }
     } catch (error) {
       console.error('Mevcut yoklama kontrolü hatası:', error)
@@ -177,8 +181,8 @@ export default function AttendanceForm() {
         }
 
         setMessage('Yoklama başarıyla güncellendi!')
-        // Mevcut yoklama listesini yenile
-        await checkExistingAttendance()
+        // Mevcut yoklama listesini yenile, mesajı değiştirme
+        await checkExistingAttendance(false)
       } else {
         // Yeni yoklama oluştur - sadece seçili olanları kaydet
         const attendanceRecords = attendanceData
