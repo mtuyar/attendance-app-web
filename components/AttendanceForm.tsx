@@ -91,7 +91,7 @@ export default function AttendanceForm() {
           const existing = data.find(a => a.student_id === student.id)
           return {
             studentId: student.id,
-            status: existing?.status || 'Geldi'
+            status: existing ? existing.status : ''
           }
         })
         setAttendanceData(existingData)
@@ -117,9 +117,11 @@ export default function AttendanceForm() {
   }
 
   const handleStatusChange = (studentId: string, status: 'Geldi' | 'Gelmedi') => {
-    setAttendanceData(prev => 
-      prev.map(item => 
-        item.studentId === studentId ? { ...item, status } : item
+    setAttendanceData(prev =>
+      prev.map(item =>
+        item.studentId === studentId
+          ? { ...item, status: item.status === status ? '' : status }
+          : item
       )
     )
   }
@@ -139,13 +141,22 @@ export default function AttendanceForm() {
         // Mevcut yoklamayı güncelle - yeni öğrenciler için insert, mevcutler için update
         const updatePromises: any[] = []
         const insertRecords: any[] = []
+        const deletePromises: any[] = []
 
         attendanceData.forEach(item => {
           const existing = existingAttendance.find(a => a.student_id === item.studentId)
           
           if (existing) {
-            // Mevcut öğrenci - sadece seçili durum varsa update
-            if (item.status !== '') {
+            if (item.status === '') {
+              // Durum boşsa, DB'den sil
+              deletePromises.push(
+                supabase
+                  .from('attendances')
+                  .delete()
+                  .eq('id', existing.id)
+              )
+            } else {
+              // Durum seçiliyse, update
               updatePromises.push(
                 supabase
                   .from('attendances')
@@ -165,6 +176,11 @@ export default function AttendanceForm() {
             }
           }
         })
+
+        // Silme işlemleri
+        for (const promise of deletePromises) {
+          await promise
+        }
 
         // Update işlemlerini yap
         for (const promise of updatePromises) {
