@@ -20,7 +20,36 @@ export default function AttendanceForm() {
   const [existingAttendance, setExistingAttendance] = useState<Attendance[]>([])
   const [searchTerm, setSearchTerm] = useState('')
 
-  const today = new Date().toISOString().split('T')[0]
+  // Haftanın günü: Pazartesi=1, Salı=2, ... Pazar=7
+  function getDateOfThisWeek(dayOfWeek?: number, weekOffset = 0) {
+    if (!dayOfWeek || isNaN(dayOfWeek) || dayOfWeek < 1 || dayOfWeek > 7) return null;
+    const now = new Date();
+    const currentDay = now.getDay() === 0 ? 7 : now.getDay();
+    const diff = dayOfWeek - currentDay + (weekOffset * 7);
+    const target = new Date(now);
+    target.setDate(now.getDate() + diff);
+    return target.toISOString().split('T')[0];
+  }
+
+  // String günü (monday, tuesday, ...) → sayıya çeviren fonksiyon
+  function dayOfWeekStringToNumber(day?: string) {
+    const map: Record<string, number> = {
+      monday: 1,
+      tuesday: 2,
+      wednesday: 3,
+      thursday: 4,
+      friday: 5,
+      saturday: 6,
+      sunday: 7
+    }
+    return day ? map[day.toLowerCase()] : null
+  }
+
+  // Seçili programın günü ve bu haftaki tarihi
+  const selectedProgramObj = programs.find(p => p.id === selectedProgram)
+  const programDayOfWeek = selectedProgramObj?.day_of_week // ör: "monday"
+  const programDayOfWeekNum = programDayOfWeek ? dayOfWeekStringToNumber(programDayOfWeek) : null
+  const programDate = programDayOfWeekNum ? getDateOfThisWeek(programDayOfWeekNum) : null;
 
   useEffect(() => {
     fetchPrograms()
@@ -39,7 +68,7 @@ export default function AttendanceForm() {
   }, [students])
 
   useEffect(() => {
-    if (selectedProgram) {
+    if (selectedProgram && programDate) {
       checkExistingAttendance()
     }
   }, [selectedProgram])
@@ -73,14 +102,14 @@ export default function AttendanceForm() {
   }
 
   const checkExistingAttendance = async (showMessage = true) => {
-    if (!selectedProgram) return
+    if (!selectedProgram || !programDate) return
 
     try {
       const { data, error } = await supabase
         .from('attendances')
         .select('*')
         .eq('program_id', selectedProgram)
-        .eq('date', today)
+        .eq('date', programDate)
 
       if (error) throw error
 
@@ -170,7 +199,7 @@ export default function AttendanceForm() {
               insertRecords.push({
                 student_id: item.studentId,
                 program_id: selectedProgram,
-                date: today,
+                date: programDate,
                 status: item.status as 'Geldi' | 'Gelmedi'
               })
             }
@@ -206,7 +235,7 @@ export default function AttendanceForm() {
           .map(item => ({
             student_id: item.studentId,
             program_id: selectedProgram,
-            date: today,
+            date: programDate,
             status: item.status as 'Geldi' | 'Gelmedi'
           }))
 
@@ -301,12 +330,12 @@ export default function AttendanceForm() {
                 <div>
                   <p className="text-xs font-medium text-green-800">Yoklama Tarihi</p>
                   <p className="text-sm font-semibold text-green-900">
-                    {new Date(today).toLocaleDateString('tr-TR', { 
-                      weekday: 'long', 
-                      year: 'numeric', 
-                      month: 'long', 
-                      day: 'numeric' 
-                    })}
+                    {programDate ? new Date(programDate).toLocaleDateString('tr-TR', {
+                      weekday: 'long',
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric'
+                    }) : '-'}
                   </p>
                 </div>
               </div>
