@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase, Student } from '@/lib/supabase'
 import { Plus, Edit, Trash2, Users, User, Phone, Mail } from 'lucide-react'
 
@@ -15,10 +15,25 @@ export default function Students() {
     name: '',
     phone_number: ''
   })
+  const formRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     fetchStudents()
   }, [])
+
+  useEffect(() => {
+    if (showForm) {
+      // Form görünür olduktan sonra sayfayı yukarı kaydır
+      setTimeout(() => {
+        if (formRef.current) {
+          const y = formRef.current.getBoundingClientRect().top + window.scrollY - 12
+          window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' })
+        } else {
+          window.scrollTo({ top: 0, behavior: 'smooth' })
+        }
+      }, 0)
+    }
+  }, [showForm])
 
   const fetchStudents = async () => {
     try {
@@ -126,6 +141,12 @@ export default function Students() {
               <div>
                 <h2 className="text-lg font-bold">Öğrenci Yönetimi</h2>
                 <p className="text-green-100 text-sm">Öğrencileri ekleyin ve düzenleyin</p>
+                <div className="mt-2">
+                  <span className="inline-flex items-center gap-1 text-[11px] bg-white/20 px-2 py-1 rounded-md">
+                    <Users className="w-3 h-3" />
+                    Toplam {students.length} öğrenci
+                  </span>
+                </div>
               </div>
             </div>
             <button
@@ -144,7 +165,7 @@ export default function Students() {
 
       {/* Öğrenci Form */}
       {showForm && (
-        <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
+        <div ref={formRef} className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
           <div className="bg-gradient-to-r from-green-50 to-emerald-50 px-4 py-4 border-b border-gray-100">
             <h3 className="font-semibold text-green-900 text-sm">
               {editingStudent ? 'Öğrenci Düzenle' : 'Yeni Öğrenci Ekle'}

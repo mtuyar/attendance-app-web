@@ -3,6 +3,29 @@
 import { useState, useEffect } from 'react'
 import { supabase, Program, Student, Attendance } from '@/lib/supabase'
 import { BarChart3, TrendingUp, Users, Calendar, Star, Award, Target } from 'lucide-react'
+import { Line, Bar, Doughnut } from 'react-chartjs-2'
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  BarElement,
+  ArcElement,
+  Tooltip,
+  Legend
+} from 'chart.js'
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  BarElement,
+  ArcElement,
+  Tooltip,
+  Legend
+)
 
 interface AttendanceWithDetails extends Attendance {
   program: Program
@@ -23,7 +46,56 @@ interface StudentStats {
   student: Student
   totalPrograms: number
   presentCount: number
+  absentCount: number
   attendanceRate: number
+  lastAttendanceDate?: string
+}
+
+// Helper functions for week ranges
+function getWeekStart(dateStr: string) {
+  const d = new Date(dateStr)
+  const day = d.getDay() === 0 ? 7 : d.getDay() // Monday=1 ... Sunday=7
+  const start = new Date(d)
+  start.setDate(d.getDate() - (day - 1))
+  return start.toISOString().split('T')[0]
+}
+
+function getWeekEndFromStart(startStr: string) {
+  const d = new Date(startStr)
+  d.setDate(d.getDate() + 6)
+  return d.toISOString().split('T')[0]
+}
+
+function formatShort(dateStr: string) {
+  const d = new Date(dateStr)
+  return d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit' })
+}
+
+function dayOfWeekStringToNumber(day?: string) {
+  const map: Record<string, number> = {
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6,
+    sunday: 7,
+  }
+  if (!day) return undefined
+  return map[day.toLowerCase()]
+}
+
+function formatSessionLabelForWeek(weekStartIso: string, programDayNum?: number) {
+  if (!programDayNum) {
+    return `${formatShort(weekStartIso)} - ${formatShort(getWeekEndFromStart(weekStartIso))}`
+  }
+  const d = new Date(weekStartIso)
+  d.setDate(d.getDate() + (programDayNum - 1))
+  return d.toLocaleDateString('tr-TR', {
+    day: '2-digit',
+    month: 'long',
+    weekday: 'long',
+  })
 }
 
 export default function Analytics() {
@@ -32,12 +104,44 @@ export default function Analytics() {
   const [topStudents, setTopStudents] = useState<StudentStats[]>([])
   const [lowestStudents, setLowestStudents] = useState<StudentStats[]>([])
   const [loading, setLoading] = useState(true)
+  const [programs, setPrograms] = useState<Program[]>([])
+  const [selectedProgram, setSelectedProgram] = useState<string>('')
+  const [weeklyLabels, setWeeklyLabels] = useState<string[]>([])
+  const [weeklyCounts, setWeeklyCounts] = useState<number[]>([])
+  const [top3WeekLabels, setTop3WeekLabels] = useState<string[]>([])
+  const [top3WeekCounts, setTop3WeekCounts] = useState<number[]>([])
+  const [lowestVisible, setLowestVisible] = useState<number>(15)
 
   useEffect(() => {
-    fetchData()
+    fetchPrograms()
   }, [])
 
-  const fetchData = async () => {
+  useEffect(() => {
+    if (selectedProgram) {
+      setLowestVisible(15)
+      fetchData(selectedProgram)
+    }
+  }, [selectedProgram])
+
+  const fetchPrograms = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('programs')
+        .select('*')
+        .order('name')
+
+      if (error) throw error
+      setPrograms(data || [])
+      if (!selectedProgram && data && data.length > 0) {
+        setSelectedProgram(data[0].id)
+      }
+    } catch (error) {
+      console.error('Programlar yüklenirken hata:', error)
+    }
+  }
+
+  const fetchData = async (programId: string) => {
+    setLoading(true)
     try {
       const { data, error } = await supabase
         .from('attendances')
@@ -46,13 +150,42 @@ export default function Analytics() {
           program:programs(*),
           student:students(*)
         `)
+        .eq('program_id', programId)
         .order('date', { ascending: false })
       
       if (error) throw error
-      setAttendances(data || [])
+      const rows = data || []
+      setAttendances(rows)
       
       // İstatistikleri hesapla
-      calculateStats(data || [])
+      calculateStats(rows)
+
+      // Seçili programın gün numarası
+      const programObj = programs.find(p => p.id === programId)
+      const programDayNum = dayOfWeekStringToNumber(programObj?.day_of_week)
+
+      // Hafta bazlı katılım (Geldi) agregasyonu
+      const weekMap = new Map<string, number>()
+      rows.forEach(a => {
+        if (a.status === 'Geldi') {
+          const ws = getWeekStart(a.date)
+          weekMap.set(ws, (weekMap.get(ws) || 0) + 1)
+        }
+      })
+      const weekKeysAsc = Array.from(weekMap.keys()).sort((a, b) => new Date(a).getTime() - new Date(b).getTime())
+      const limitedKeys = weekKeysAsc.slice(-8)
+      const weekLabels = limitedKeys.map(ws => formatSessionLabelForWeek(ws, programDayNum))
+      const weekCounts = limitedKeys.map(ws => weekMap.get(ws) || 0)
+      setWeeklyLabels(weekLabels)
+      setWeeklyCounts(weekCounts)
+
+      // En çok katılımcı olan 3 hafta
+      const top3 = weekKeysAsc
+        .map(ws => ({ ws, label: formatSessionLabelForWeek(ws, programDayNum), count: weekMap.get(ws) || 0 }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 3)
+      setTop3WeekLabels(top3.map(x => x.label))
+      setTop3WeekCounts(top3.map(x => x.count))
     } catch (error) {
       console.error('Veri yüklenirken hata:', error)
     } finally {
@@ -143,7 +276,9 @@ export default function Analytics() {
           student: attendance.student,
           totalPrograms: 0,
           presentCount: 0,
-          attendanceRate: 0
+          absentCount: 0,
+          attendanceRate: 0,
+          lastAttendanceDate: undefined,
         })
       }
       
@@ -151,6 +286,12 @@ export default function Analytics() {
       stats.totalPrograms++
       if (attendance.status === 'Geldi') {
         stats.presentCount++
+      } else {
+        stats.absentCount++
+      }
+      // En son katılım tarihini güncelle (ISO tarih olduğu için string karşılaştırması da çalışır ama net olmak için Date kullanıyoruz)
+      if (!stats.lastAttendanceDate || new Date(attendance.date) > new Date(stats.lastAttendanceDate)) {
+        stats.lastAttendanceDate = attendance.date
       }
     })
 
@@ -162,13 +303,27 @@ export default function Analytics() {
     })
 
     const allStudentStats = Array.from(studentMap.values())
+    
+    // En çok katılanlar: öncelik presentCount, sonra totalPrograms, sonra son katılım tarihi
     const sortedTopStudents = allStudentStats
-      .sort((a, b) => b.attendanceRate - a.attendanceRate)
+      .sort((a, b) => {
+        if (b.presentCount !== a.presentCount) return b.presentCount - a.presentCount
+        if (b.totalPrograms !== a.totalPrograms) return b.totalPrograms - a.totalPrograms
+        const aDate = a.lastAttendanceDate ? new Date(a.lastAttendanceDate).getTime() : 0
+        const bDate = b.lastAttendanceDate ? new Date(b.lastAttendanceDate).getTime() : 0
+        return bDate - aDate
+      })
       .slice(0, 15)
     
+    // En çok gelmeyenler: öncelik absentCount, sonra totalPrograms, sonra son katılım tarihi
     const sortedLowestStudents = allStudentStats
-      .sort((a, b) => a.attendanceRate - b.attendanceRate)
-      .slice(0, 15)
+      .sort((a, b) => {
+        if (b.absentCount !== a.absentCount) return b.absentCount - a.absentCount
+        if (b.totalPrograms !== a.totalPrograms) return b.totalPrograms - a.totalPrograms
+        const aDate = a.lastAttendanceDate ? new Date(a.lastAttendanceDate).getTime() : 0
+        const bDate = b.lastAttendanceDate ? new Date(b.lastAttendanceDate).getTime() : 0
+        return bDate - aDate
+      })
 
     setTopStudents(sortedTopStudents)
     setLowestStudents(sortedLowestStudents)
@@ -198,6 +353,19 @@ export default function Analytics() {
             <h2 className="text-lg font-bold">Analiz & İstatistikler</h2>
           </div>
           <p className="text-emerald-100 text-sm">Program ve öğrenci performans analizleri</p>
+        </div>
+        {/* Program Seçici */}
+        <div className="p-4 border-t border-gray-100 bg-white">
+          <label className="block text-xs font-semibold text-gray-700 mb-2">Program Seçin</label>
+          <select
+            value={selectedProgram}
+            onChange={(e) => setSelectedProgram(e.target.value)}
+            className="w-full px-3 py-2.5 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all duration-200 text-sm"
+          >
+            {programs.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -243,7 +411,7 @@ export default function Analytics() {
         <div className="bg-gradient-to-r from-green-50 to-emerald-50 px-4 py-4 border-b border-gray-100">
           <div className="flex items-center gap-2">
             <Award className="w-4 h-4 text-green-600" />
-            <h3 className="font-semibold text-green-900 text-sm">En Yüksek Katılım Oranına Sahip Öğrenciler (İlk 15)</h3>
+            <h3 className="font-semibold text-green-900 text-sm">En Çok Katılan Öğrenciler (İlk 15)</h3>
           </div>
         </div>
         <div className="p-4 space-y-2">
@@ -266,8 +434,8 @@ export default function Analytics() {
                     </p>
                   </div>
                 </div>
-                <div className={`px-2 py-1 rounded-lg text-xs font-medium ${getAttendanceColor(student.attendanceRate)}`}>
-                  %{student.attendanceRate.toFixed(1)}
+                <div className="px-2 py-1 rounded-lg text-xs font-medium bg-green-50 text-green-700">
+                  {student.presentCount} geldi
                 </div>
               </div>
             ))
@@ -280,7 +448,7 @@ export default function Analytics() {
         <div className="bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-4 border-b border-gray-100">
           <div className="flex items-center gap-2">
             <Target className="w-4 h-4 text-amber-600" />
-            <h3 className="font-semibold text-amber-900 text-sm">En Düşük Katılım Oranına Sahip Öğrenciler (İlk 15)</h3>
+            <h3 className="font-semibold text-amber-900 text-sm">En Çok Gelmeyen Öğrenciler</h3>
           </div>
         </div>
         <div className="p-4 space-y-2">
@@ -290,25 +458,100 @@ export default function Analytics() {
               <p className="text-gray-500 text-sm">Henüz öğrenci verisi bulunmuyor</p>
             </div>
           ) : (
-            lowestStudents.map((student, index) => (
-              <div key={student.student.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-gradient-to-r from-amber-500 to-orange-500 rounded-full flex items-center justify-center text-white font-semibold text-xs">
-                    {index + 1}
+            <>
+              {lowestStudents.slice(0, lowestVisible).map((student, index) => (
+                <div key={student.student.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-gradient-to-r from-amber-500 to-orange-500 rounded-full flex items-center justify-center text-white font-semibold text-xs">
+                      {index + 1}
+                    </div>
+                    <div>
+                      <p className="font-semibold text-gray-900 text-sm">{student.student.name}</p>
+                      <p className="text-xs text-gray-500">
+                        {student.presentCount} geldi / {student.totalPrograms} program
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-semibold text-gray-900 text-sm">{student.student.name}</p>
-                    <p className="text-xs text-gray-500">
-                      {student.presentCount} geldi / {student.totalPrograms} program
-                    </p>
+                  <div className="px-2 py-1 rounded-lg text-xs font-medium bg-red-50 text-red-700">
+                    {student.absentCount} gelmedi
                   </div>
                 </div>
-                <div className={`px-2 py-1 rounded-lg text-xs font-medium ${getAttendanceColor(student.attendanceRate)}`}>
-                  %{student.attendanceRate.toFixed(1)}
-                </div>
-              </div>
-            ))
+              ))}
+              {lowestVisible < lowestStudents.length && (
+                <button
+                  onClick={() => setLowestVisible(v => v + 15)}
+                  className="w-full mt-2 px-4 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 text-sm font-medium rounded-xl transition-all duration-200"
+                >
+                  Daha fazla gör (+15)
+                </button>
+              )}
+            </>
           )}
+        </div>
+      </div>
+
+      {/* Ek Analizler */}
+      <div className="grid grid-cols-1 gap-4">
+        {/* Pasta Grafik: Toplam Geldi / Gelmedi */}
+        <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
+          <div className="bg-gradient-to-r from-purple-50 to-pink-50 px-4 py-4 border-b border-gray-100">
+            <h3 className="font-semibold text-purple-900 text-sm">Haftalara Göre Toplam Katılımcı (Geldi) Dağılımı</h3>
+          </div>
+          <div className="p-4 space-y-4">
+            {weeklyLabels.length === 0 ? (
+              <div className="text-center py-6 text-gray-500 text-sm">Veri yok</div>
+            ) : (
+              <>
+                <div className="h-48 md:h-56 w-full">
+                  <Doughnut
+                    data={{
+                      labels: weeklyLabels,
+                      datasets: [
+                        {
+                          data: weeklyCounts,
+                          backgroundColor: weeklyCounts.map((_, i) => ['#34d399','#60a5fa','#fca5a5','#fbbf24','#a78bfa','#f472b6','#22c55e'][i % 7]),
+                        }
+                      ]
+                    }}
+                    options={{
+                      plugins: { legend: { display: false } },
+                      responsive: true,
+                      maintainAspectRatio: false
+                    }}
+                  />
+                </div>
+                <div className="space-y-2">
+                  {weeklyLabels.map((label, idx) => (
+                    <div key={label} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2 text-xs">
+                      <span className="text-gray-700">{label}</span>
+                      <span className="font-semibold text-gray-900">{weeklyCounts[idx]} kişi</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* En Çok Katılımcı Olan 3 Hafta */}
+        <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
+          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-4 py-4 border-b border-gray-100">
+            <h3 className="font-semibold text-blue-900 text-sm">En Çok Katılımcı Olan 3 Hafta</h3>
+          </div>
+          <div className="p-4">
+            {top3WeekLabels.length === 0 ? (
+              <div className="text-center py-6 text-gray-500 text-sm">Veri yok</div>
+            ) : (
+              <div className="space-y-2">
+                {top3WeekLabels.map((label, idx) => (
+                  <div key={label} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2 text-sm">
+                    <span className="text-gray-800">{label}</span>
+                    <span className="font-semibold text-gray-900">{top3WeekCounts[idx]} kişi</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
