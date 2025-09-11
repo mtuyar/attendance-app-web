@@ -90,17 +90,7 @@ export default function LoginScreen() {
               </button>
             </form>
 
-            <div className="mt-8 p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border border-green-100">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
-                  <Shield className="w-4 h-4 text-green-600" />
-                </div>
-                <div>
-                  <p className="text-green-800 font-medium">Demo Bilgileri</p>
-                  <p className="text-green-600 text-sm">Şifre: admin1234</p>
-                </div>
-              </div>
-            </div>
+            {/* Demo bilgileri kaldırıldı */}
           </div>
         </div>
       </div>

@@ -19,6 +19,7 @@ export default function AttendanceForm() {
   const [message, setMessage] = useState('')
   const [existingAttendance, setExistingAttendance] = useState<Attendance[]>([])
   const [searchTerm, setSearchTerm] = useState('')
+  const [memberStudentIds, setMemberStudentIds] = useState<string[] | null>(null)
 
   // Haftanın günü: Pazartesi=1, Salı=2, ... Pazar=7
   function getDateOfThisWeek(dayOfWeek?: number, weekOffset = 0) {
@@ -66,6 +67,28 @@ export default function AttendanceForm() {
       )
     }
   }, [students])
+
+  useEffect(() => {
+    if (selectedProgram) {
+      loadProgramMembers(selectedProgram)
+    } else {
+      setMemberStudentIds(null)
+    }
+  }, [selectedProgram])
+
+  const loadProgramMembers = async (programId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('program_students')
+        .select('student_id')
+        .eq('program_id', programId)
+      if (error) throw error
+      setMemberStudentIds((data || []).map(r => r.student_id as string))
+    } catch (error) {
+      console.error('Program üyeleri yüklenirken hata:', error)
+      setMemberStudentIds([])
+    }
+  }
 
   useEffect(() => {
     if (selectedProgram && programDate) {
@@ -268,8 +291,12 @@ export default function AttendanceForm() {
     }
   }
 
-  // Filtrelenmiş öğrenci listesi
-  const filteredStudents = students.filter(student =>
+  // Filtrelenmiş öğrenci listesi (program üyelerine göre)
+  const listSource = memberStudentIds === null
+    ? students
+    : students.filter(s => memberStudentIds.includes(s.id))
+
+  const filteredStudents = listSource.filter(student =>
     student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (student.phone_number && student.phone_number.includes(searchTerm))
   )
@@ -364,83 +391,94 @@ export default function AttendanceForm() {
                 <div className="flex items-center gap-2 mb-3">
                   <Users className="w-4 h-4 text-gray-600" />
                   <label className="text-sm font-semibold text-gray-700">
-                    Öğrenci Yoklaması ({filteredStudents.length}/{students.length} öğrenci)
+                    Öğrenci Yoklaması ({filteredStudents.length}/{listSource.length} öğrenci)
                   </label>
                 </div>
                 
-                {/* Arama */}
-                <div className="mb-3">
-                  <div className="relative">
-                    <input
-                      type="text"
-                      placeholder="Öğrenci ara..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-full px-3 py-2.5 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-sm"
-                    />
-                    <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                      <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                      </svg>
-                    </div>
+                {/* Üyelik uyarısı */}
+                {memberStudentIds !== null && listSource.length === 0 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-3 text-xs text-amber-800">
+                    Bu ders için kayıtlı öğrenci bulunmuyor. Lütfen programa öğrenci ekleyin.
                   </div>
-                </div>
+                )}
                 
-                <div className="space-y-2">
-                  {filteredStudents.map(student => {
-                    const attendance = attendanceData.find(a => a.studentId === student.id)
-                    return (
-                      <div key={student.id} className="bg-gray-50 rounded-xl p-3 border border-gray-100">
-                        <div className="flex flex-col space-y-3">
-                          {/* Öğrenci Bilgisi */}
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full flex items-center justify-center text-white font-semibold text-sm flex-shrink-0">
-                              {student.name.charAt(0).toUpperCase()}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="font-semibold text-gray-900 text-sm truncate">{student.name}</p>
-                              {student.phone_number && (
-                                <p className="text-xs text-gray-500 truncate">{student.phone_number}</p>
-                              )}
-                            </div>
-                          </div>
-                          
-                          {/* Durum Butonları */}
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleStatusChange(student.id, 'Geldi')}
-                              className={`flex-1 flex items-center justify-center gap-1 py-2 px-3 rounded-lg text-xs font-medium transition-all duration-200 ${
-                                attendance?.status === 'Geldi'
-                                  ? 'bg-green-100 text-green-800 border-2 border-green-200'
-                                  : attendance?.status === ''
-                                  ? 'bg-gray-200 text-gray-500 border-2 border-gray-300'
-                                  : 'bg-gray-100 text-gray-600 hover:bg-green-50 hover:text-green-700 border-2 border-transparent'
-                              }`}
-                            >
-                              <Check className="w-3 h-3" />
-                              Geldi
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleStatusChange(student.id, 'Gelmedi')}
-                              className={`flex-1 flex items-center justify-center gap-1 py-2 px-3 rounded-lg text-xs font-medium transition-all duration-200 ${
-                                attendance?.status === 'Gelmedi'
-                                  ? 'bg-red-100 text-red-800 border-2 border-red-200'
-                                  : attendance?.status === ''
-                                  ? 'bg-gray-200 text-gray-500 border-2 border-gray-300'
-                                  : 'bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-700 border-2 border-transparent'
-                              }`}
-                            >
-                              <X className="w-3 h-3" />
-                              Gelmedi
-                            </button>
-                          </div>
+                {listSource.length > 0 && (
+                  <>
+                    {/* Arama */}
+                    <div className="mb-3">
+                      <div className="relative">
+                        <input
+                          type="text"
+                          placeholder="Öğrenci ara..."
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
+                          className="w-full px-3 py-2.5 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-sm"
+                        />
+                        <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                          <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                          </svg>
                         </div>
                       </div>
-                    )
-                  })}
-                </div>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      {filteredStudents.map(student => {
+                        const attendance = attendanceData.find(a => a.studentId === student.id)
+                        return (
+                          <div key={student.id} className="bg-gray-50 rounded-xl p-3 border border-gray-100">
+                            <div className="flex flex-col space-y-3">
+                              {/* Öğrenci Bilgisi */}
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full flex items-center justify-center text-white font-semibold text-sm flex-shrink-0">
+                                  {student.name.charAt(0).toUpperCase()}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-semibold text-gray-900 text-sm truncate">{student.name}</p>
+                                  {student.phone_number && (
+                                    <p className="text-xs text-gray-500 truncate">{student.phone_number}</p>
+                                  )}
+                                </div>
+                              </div>
+                              
+                              {/* Durum Butonları */}
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleStatusChange(student.id, 'Geldi')}
+                                  className={`flex-1 flex items-center justify-center gap-1 py-2 px-3 rounded-lg text-xs font-medium transition-all duration-200 ${
+                                    attendance?.status === 'Geldi'
+                                      ? 'bg-green-100 text-green-800 border-2 border-green-200'
+                                      : attendance?.status === ''
+                                      ? 'bg-gray-200 text-gray-500 border-2 border-gray-300'
+                                      : 'bg-gray-100 text-gray-600 hover:bg-green-50 hover:text-green-700 border-2 border-transparent'
+                                  }`}
+                                >
+                                  <Check className="w-3 h-3" />
+                                  Geldi
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleStatusChange(student.id, 'Gelmedi')}
+                                  className={`flex-1 flex items-center justify-center gap-1 py-2 px-3 rounded-lg text-xs font-medium transition-all duration-200 ${
+                                    attendance?.status === 'Gelmedi'
+                                      ? 'bg-red-100 text-red-800 border-2 border-red-200'
+                                      : attendance?.status === ''
+                                      ? 'bg-gray-200 text-gray-500 border-2 border-gray-300'
+                                      : 'bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-700 border-2 border-transparent'
+                                  }`}
+                                >
+                                  <X className="w-3 h-3" />
+                                  Gelmedi
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -464,7 +502,7 @@ export default function AttendanceForm() {
             )}
 
             {/* Kaydet Butonu */}
-            {selectedProgram && (
+            {selectedProgram && listSource.length > 0 && (
               <button
                 type="submit"
                 disabled={saving}

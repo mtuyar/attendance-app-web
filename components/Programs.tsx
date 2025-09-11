@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { supabase, Program } from '@/lib/supabase'
+import { supabase, Program, Student } from '@/lib/supabase'
 import { Plus, Edit, Trash2, Settings, Calendar, Users } from 'lucide-react'
 
 export default function Programs() {
@@ -16,10 +16,34 @@ export default function Programs() {
     day_of_week: '',
     time: ''
   })
+  // Öğrenciler ve üyelik seçimleri
+  const [students, setStudents] = useState<Student[]>([])
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([])
+  const [membershipCounts, setMembershipCounts] = useState<Record<string, number>>({})
+  const [studentSearch, setStudentSearch] = useState('')
 
   useEffect(() => {
     fetchPrograms()
+    fetchStudents()
+    fetchMembershipCounts()
   }, [])
+
+  const fetchMembershipCounts = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('program_students')
+        .select('program_id')
+      if (error) throw error
+      const counts: Record<string, number> = {}
+      ;(data || []).forEach((row: any) => {
+        const pid = row.program_id as string
+        counts[pid] = (counts[pid] || 0) + 1
+      })
+      setMembershipCounts(counts)
+    } catch (error) {
+      console.error('Üyelik sayıları yüklenirken hata:', error)
+    }
+  }
 
   const fetchPrograms = async () => {
     try {
@@ -37,6 +61,67 @@ export default function Programs() {
     }
   }
 
+  const fetchStudents = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('students')
+        .select('*')
+        .order('name')
+      if (error) throw error
+      setStudents(data || [])
+    } catch (error) {
+      console.error('Öğrenciler yüklenirken hata:', error)
+    }
+  }
+
+  const loadMembership = async (programId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('program_students')
+        .select('student_id')
+        .eq('program_id', programId)
+      if (error) throw error
+      const ids = (data || []).map(r => r.student_id as string)
+      setSelectedStudentIds(ids)
+    } catch (error) {
+      console.error('Üyelikler yüklenirken hata:', error)
+      setSelectedStudentIds([])
+    }
+  }
+
+  const syncMembership = async (programId: string, nextIds: string[]) => {
+    // Mevcut üyelikleri al, farkları uygula
+    const { data: current, error: curErr } = await supabase
+      .from('program_students')
+      .select('student_id')
+      .eq('program_id', programId)
+    if (curErr) throw curErr
+    const currentIds = new Set((current || []).map(r => r.student_id as string))
+    const nextSet = new Set(nextIds)
+
+    const toAdd = nextIds.filter(id => !currentIds.has(id))
+    const toRemove = Array.from(currentIds).filter(id => !nextSet.has(id))
+
+    // Ekle
+    if (toAdd.length > 0) {
+      const insertRows = toAdd.map(student_id => ({ program_id: programId, student_id }))
+      const { error: insErr } = await supabase
+        .from('program_students')
+        .insert(insertRows)
+      if (insErr) throw insErr
+    }
+
+    // Sil
+    if (toRemove.length > 0) {
+      const { error: delErr } = await supabase
+        .from('program_students')
+        .delete()
+        .eq('program_id', programId)
+        .in('student_id', toRemove)
+      if (delErr) throw delErr
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
@@ -51,26 +136,39 @@ export default function Programs() {
     try {
       if (editingProgram) {
         // Güncelle
-        const { error } = await supabase
+        const { error: updErr } = await supabase
           .from('programs')
           .update(formData)
           .eq('id', editingProgram.id)
-        
-        if (error) throw error
-        setMessage('Program başarıyla güncellendi!')
+        if (updErr) throw updErr
+
+        // Üyelikleri senkronize et
+        await syncMembership(editingProgram.id, selectedStudentIds)
+
+        setMessage('Program ve üyeler başarıyla güncellendi!')
+        await fetchMembershipCounts()
       } else {
-        // Yeni program ekle
-        const { error } = await supabase
+        // Yeni program ekle ve id al
+        const { data: inserted, error: insErr } = await supabase
           .from('programs')
-          .insert(formData)
-        
-        if (error) throw error
-        setMessage('Program başarıyla eklendi!')
+          .insert({ ...formData })
+          .select()
+          .single()
+        if (insErr) throw insErr
+
+        // Üyelikleri senkronize et (varsa seçimler)
+        if (inserted?.id) {
+          await syncMembership(inserted.id, selectedStudentIds)
+        }
+
+        setMessage('Program ve üyeler başarıyla eklendi!')
+        await fetchMembershipCounts()
       }
       
       setShowForm(false)
       setEditingProgram(null)
       setFormData({ name: '', day_of_week: '', time: '' })
+      setSelectedStudentIds([])
       fetchPrograms()
     } catch (error) {
       console.error('Program kaydedilirken hata:', error)
@@ -87,7 +185,10 @@ export default function Programs() {
       day_of_week: program.day_of_week || '',
       time: program.time || ''
     })
+    setSelectedStudentIds([])
     setShowForm(true)
+    // Üyelikleri getir
+    loadMembership(program.id)
   }
 
   const handleDelete = async (id: string) => {
@@ -103,6 +204,7 @@ export default function Programs() {
       
       setMessage('Program başarıyla silindi!')
       fetchPrograms()
+      fetchMembershipCounts()
     } catch (error) {
       console.error('Program silinirken hata:', error)
       setMessage('Program silinirken hata oluştu. Lütfen daha sonra tekrar deneyin.')
@@ -148,6 +250,8 @@ export default function Programs() {
                 setShowForm(true)
                 setEditingProgram(null)
                 setFormData({ name: '', day_of_week: '', time: '' })
+                setSelectedStudentIds([])
+                setMessage('')
               }}
               className="bg-white/20 hover:bg-white/30 text-white p-2 rounded-xl transition-all duration-200"
             >
@@ -188,6 +292,7 @@ export default function Programs() {
                   value={formData.day_of_week}
                   onChange={(e) => setFormData({ ...formData, day_of_week: e.target.value })}
                   className="w-full px-3 py-2.5 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 appearance-none cursor-pointer text-sm"
+                  required
                 >
                   <option value="">Gün seçin</option>
                   <option value="monday">Pazartesi</option>
@@ -213,6 +318,55 @@ export default function Programs() {
               </div>
             </div>
 
+            {/* Öğrenci Seçimi */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-700 mb-2">
+                Öğrenciler (Bu programa bağlı öğrenciler)
+              </label>
+              {/* Arama */}
+              <div className="mb-2">
+                <input
+                  type="text"
+                  value={studentSearch}
+                  onChange={(e) => setStudentSearch(e.target.value)}
+                  placeholder="Öğrenci ara..."
+                  className="w-full px-3 py-2 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-sm"
+                />
+              </div>
+              <div className="max-h-56 overflow-auto rounded-xl border border-gray-200 divide-y divide-gray-100">
+                {students.length === 0 ? (
+                  <div className="p-3 text-xs text-gray-500">Öğrenci bulunamadı</div>
+                ) : (
+                  students
+                    .filter(s =>
+                      s.name.toLowerCase().includes(studentSearch.toLowerCase()) ||
+                      (s.phone_number && s.phone_number.includes(studentSearch))
+                    )
+                    .map(s => {
+                      const checked = selectedStudentIds.includes(s.id)
+                      return (
+                        <label key={s.id} className="flex items-center gap-3 p-3 text-sm cursor-pointer hover:bg-gray-50">
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4"
+                            checked={checked}
+                            onChange={(e) => {
+                              setSelectedStudentIds(prev => {
+                                if (e.target.checked) return Array.from(new Set([...prev, s.id]))
+                                return prev.filter(id => id !== s.id)
+                              })
+                            }}
+                          />
+                          <span className="text-gray-800">
+                            {s.name}{s.phone_number ? ` • ${s.phone_number}` : ''}
+                          </span>
+                        </label>
+                      )
+                    })
+                )}
+              </div>
+            </div>
+
             <div className="flex gap-2">
               <button
                 type="submit"
@@ -228,6 +382,7 @@ export default function Programs() {
                   setShowForm(false)
                   setEditingProgram(null)
                   setFormData({ name: '', day_of_week: '', time: '' })
+                  setSelectedStudentIds([])
                   setMessage('')
                 }}
                 className="px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-xl transition-all duration-200 text-sm disabled:opacity-50"
@@ -295,6 +450,10 @@ export default function Programs() {
                       <span>{program.time}</span>
                     </div>
                   )}
+                  <div className="flex items-center gap-1">
+                    <Users className="w-3 h-3" />
+                    <span>{membershipCounts[program.id] || 0} öğrenci</span>
+                  </div>
                 </div>
               </div>
             </div>
